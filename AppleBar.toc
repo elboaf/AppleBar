@@ -1,0 +1,9 @@
+## Interface: 11200
+## Title: AppleBar |cff7fff7fSuper-WoW|r
+## Notes: Compact raid marker bar with auto-mark memory. Requires SuperWoW.
+## Author: You
+## SavedVariables: AppleBarDB
+## Version: 1.0.0
+## OptionalDeps: AutoMarker
+
+AppleBar.lua
