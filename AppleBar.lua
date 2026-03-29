@@ -32,7 +32,7 @@ local CLEAR_ICON    = "Interface\\Icons\\Inv_scroll_09"
 local BUTTON_SIZE    = 28
 local BAR_PADDING    = 4
 local NUM_MARKS      = 8
-local PACK_RANGE     = 20  -- social aggro baseline for proximity pack inference
+local PACK_RANGE     = 12  -- conservative pack proximity range
 
 -- upvalues
 local UnitExists            = UnitExists
@@ -1032,6 +1032,124 @@ function AppleBar_Initialize()
 end
 
 -- ============================================================
+-- Serialization  (compact, human-readable, no external deps)
+-- Format: each record is one line: TYPE|key1|val1|key2|val2...
+-- Types: OVR (override), PACK (custom pack entry), OBS (observation)
+-- ============================================================
+
+local function AB_Serialize()
+  local lines = {}
+  local t = table.insert
+
+  -- guidMarkOverrides
+  for guid, entry in pairs(AppleBarDB.guidMarkOverrides) do
+    local mark  = type(entry) == "table" and entry.mark  or entry
+    local name  = type(entry) == "table" and entry.name  or "unknown"
+    local npcid = type(entry) == "table" and entry.npcid or ""
+    t(lines, "OVR|" .. guid .. "|" .. mark .. "|" .. name .. "|" .. (npcid or ""))
+  end
+
+  -- customPacks: OVR entries already cover per-guid marks; serialize pack membership
+  for zone, packs in pairs(AppleBarDB.customPacks) do
+    for packKey, pack in pairs(packs) do
+      for guid, entry in pairs(pack) do
+        local mark  = type(entry) == "table" and entry.mark  or entry
+        local name  = type(entry) == "table" and entry.name  or "unknown"
+        local npcid = type(entry) == "table" and entry.npcid or ""
+        t(lines, "PACK|" .. zone .. "|" .. packKey .. "|" .. guid .. "|" .. mark .. "|" .. name .. "|" .. (npcid or ""))
+      end
+    end
+  end
+
+  -- observations
+  for zone, npcids in pairs(AppleBarDB.observations) do
+    for npcid, counts in pairs(npcids) do
+      local parts = "OBS|" .. zone .. "|" .. npcid .. "|" .. (counts.total or 0)
+      for markIndex = 1, 8 do
+        parts = parts .. "|" .. (counts[markIndex] or 0)
+      end
+      t(lines, parts)
+    end
+  end
+
+  return table.concat(lines, "\n")
+end
+
+local function AB_Deserialize(str, merge)
+  if not str or str == "" then return false, "empty data" end
+  if not merge then
+    AppleBarDB.guidMarkOverrides = {}
+    AppleBarDB.customPacks       = {}
+    AppleBarDB.observations      = {}
+  end
+
+  local count = 0
+  for line in string.gfind(str, "[^\n]+") do
+    local parts = {}
+    for segment in string.gfind(line, "[^|]+") do
+      parts[table.getn(parts) + 1] = segment
+    end
+
+    local rtype = parts[1]
+    if rtype == "OVR" and table.getn(parts) >= 4 then
+      local guid, mark, name, npcid = parts[2], tonumber(parts[3]), parts[4], parts[5]
+      if guid and mark then
+        AppleBarDB.guidMarkOverrides[guid] = { mark = mark, name = name or "unknown", npcid = npcid }
+        count = count + 1
+      end
+
+    elseif rtype == "PACK" and table.getn(parts) >= 6 then
+      local zone, packKey, guid = parts[2], parts[3], parts[4]
+      local mark, name, npcid   = tonumber(parts[5]), parts[6], parts[7]
+      if zone and packKey and guid and mark then
+        if not AppleBarDB.customPacks[zone] then AppleBarDB.customPacks[zone] = {} end
+        if not AppleBarDB.customPacks[zone][packKey] then AppleBarDB.customPacks[zone][packKey] = {} end
+        AppleBarDB.customPacks[zone][packKey][guid] = { mark = mark, name = name or "unknown", npcid = npcid }
+        count = count + 1
+      end
+
+    elseif rtype == "OBS" and table.getn(parts) >= 4 then
+      local zone, npcid, total = parts[2], parts[3], tonumber(parts[4])
+      if zone and npcid and total then
+        if not AppleBarDB.observations[zone] then AppleBarDB.observations[zone] = {} end
+        local counts = { total = total }
+        for i = 1, 8 do
+          local c = tonumber(parts[4 + i])
+          if c and c > 0 then counts[i] = c end
+        end
+        AppleBarDB.observations[zone][npcid] = counts
+        count = count + 1
+      end
+    end
+  end
+
+  return true, count
+end
+
+local AB_EXPORT_FILE = "AppleBar_data"
+
+local function AB_Export()
+  local data = AB_Serialize()
+  ExportFile(AB_EXPORT_FILE, data)
+  DEFAULT_CHAT_FRAME:AddMessage("|cffFFCC00AppleBar|r: Exported to |cffFFFF00<WoWDir>\\imports\\" .. AB_EXPORT_FILE .. ".txt|r")
+end
+
+local function AB_Import(merge)
+  local data = ImportFile(AB_EXPORT_FILE)
+  if not data or data == "" then
+    DEFAULT_CHAT_FRAME:AddMessage("|cffFFCC00AppleBar|r: No file found at |cffFFFF00<WoWDir>\\imports\\" .. AB_EXPORT_FILE .. ".txt|r")
+    return
+  end
+  local ok, count = AB_Deserialize(data, merge)
+  if ok then
+    local mode = merge and "Merged" or "Imported"
+    DEFAULT_CHAT_FRAME:AddMessage("|cffFFCC00AppleBar|r: " .. mode .. " |cff00FF00" .. count .. "|r records.")
+  else
+    DEFAULT_CHAT_FRAME:AddMessage("|cffFFCC00AppleBar|r: Import failed: " .. count)
+  end
+end
+
+-- ============================================================
 -- Slash commands
 -- ============================================================
 
@@ -1040,6 +1158,9 @@ local function AppleBar_HandleCommand(msg)
 
   if cmd == "" or cmd == "help" then
     DEFAULT_CHAT_FRAME:AddMessage("|cffFFCC00AppleBar|r commands:")
+    DEFAULT_CHAT_FRAME:AddMessage("  |cff00FF00/ab export|r         - Export data to AppleBar_data.txt")
+    DEFAULT_CHAT_FRAME:AddMessage("  |cff00FF00/ab import|r         - Import data from AppleBar_data.txt (replaces)")
+    DEFAULT_CHAT_FRAME:AddMessage("  |cff00FF00/ab merge|r          - Merge data from AppleBar_data.txt (keeps existing)")
     DEFAULT_CHAT_FRAME:AddMessage("  |cff00FF00/ab flip|r           - Mirror/flip the bar orientation")
     DEFAULT_CHAT_FRAME:AddMessage("  |cff00FF00/ab lock|r           - Toggle drag lock")
     DEFAULT_CHAT_FRAME:AddMessage("  |cff00FF00/ab auto|r           - Toggle auto-mark mode")
@@ -1059,6 +1180,15 @@ local function AppleBar_HandleCommand(msg)
     else
       DEFAULT_CHAT_FRAME:AddMessage("|cffFFCC00AppleBar|r: Scale must be between 0.3 and 3.0")
     end
+
+  elseif cmd == "export" then
+    AB_Export()
+
+  elseif cmd == "import" then
+    AB_Import(false)
+
+  elseif cmd == "merge" then
+    AB_Import(true)
 
   elseif cmd == "flip" then
     AppleBarDB.flipped = not AppleBarDB.flipped
