@@ -583,6 +583,10 @@ autoSlot:SetScript("OnMouseUp", function()
   if arg1 == "LeftButton" then
     AppleBar_MarkGroup()
   elseif arg1 == "RightButton" then
+    if InGroup() and not PlayerCanRaidMark() then
+      DEFAULT_CHAT_FRAME:AddMessage("|cffFFCC00AppleBar|r: Need leader/assist to use auto-mark mode.")
+      return
+    end
     AppleBarDB.autoMode = not AppleBarDB.autoMode
     AppleBar_UpdateAutoSlot()
     DEFAULT_CHAT_FRAME:AddMessage("|cffFFCC00AppleBar|r Auto-mark: " ..
@@ -642,10 +646,6 @@ clearSlot:SetScript("OnMouseUp", function()
     DEFAULT_CHAT_FRAME:AddMessage("|cffFFCC00AppleBar|r: All marks cleared.")
 
   elseif arg1 == "RightButton" then
-    if not PlayerCanMark() then
-      DEFAULT_CHAT_FRAME:AddMessage("|cffFFCC00AppleBar|r: Need leader/assist to set marks.")
-      return
-    end
     local zone = GetRealZoneText()
     local pack = {}
     local saved = 0
@@ -1073,10 +1073,14 @@ local function AppleBar_HandleCommand(msg)
       (AppleBarDB.locked and "|cffFF4444Locked|r" or "|cff00FF00Unlocked|r"))
 
   elseif cmd == "auto" then
-    AppleBarDB.autoMode = not AppleBarDB.autoMode
-    AppleBar_UpdateAutoSlot()
-    DEFAULT_CHAT_FRAME:AddMessage("|cffFFCC00AppleBar|r Auto-mark: " ..
-      (AppleBarDB.autoMode and "|cff00FF00ON|r" or "|cffFF4444OFF|r"))
+    if InGroup() and not PlayerCanRaidMark() then
+      DEFAULT_CHAT_FRAME:AddMessage("|cffFFCC00AppleBar|r: Need leader/assist to use auto-mark mode.")
+    else
+      AppleBarDB.autoMode = not AppleBarDB.autoMode
+      AppleBar_UpdateAutoSlot()
+      DEFAULT_CHAT_FRAME:AddMessage("|cffFFCC00AppleBar|r Auto-mark: " ..
+        (AppleBarDB.autoMode and "|cff00FF00ON|r" or "|cffFF4444OFF|r"))
+    end
 
   elseif cmd == "mark" then
     AppleBar_MarkGroup()
