@@ -107,9 +107,13 @@ Right-clicking also performs a **proximity sweep**: any marked mobs within 20 ya
 
 ### 3. Observation learning (`observations`)
 
-AppleBar passively observes every `RAID_TARGET_UPDATE` event — from anyone in your group or raid — and records which mark index each NPC type received. After a mark has been observed **at least twice** for the same NPC type, that mark becomes the learned default.
+AppleBar passively observes every `RAID_TARGET_UPDATE` event — from anyone in your group or raid — and records a full history of every mark assigned to each NPC type. For each NPC, it tracks how many times each mark index has been observed across all sessions, accumulating over time.
 
-**Junk filtering**: marks assigned by AppleBar's own free-slot fallback in auto-mode (random assignments on unknown mobs) are flagged and excluded from the observation data, preventing bad data accumulation. Only intentional marks — from raid leaders, assists, or yourself via manual slot right-click — are learned from.
+When deciding what mark to assign, the mark with the highest observation count for that NPC type wins. A minimum of 2 observations is required before a learned mark is used, filtering out one-off noise from unusual or accidental assignments.
+
+Over many sessions, the consensus naturally self-corrects — if skull goes on the healer 15 out of 17 times, skull wins regardless of the two outliers.
+
+**Junk filtering**: marks assigned by AppleBar's own free-slot fallback in auto-mode (random assignments on unknown mobs) are flagged and excluded from the observation data, preventing noise from accumulating. Only intentional marks — from raid leaders, assists, or yourself via manual slot right-click — are recorded.
 
 ---
 
