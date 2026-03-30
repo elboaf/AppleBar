@@ -58,6 +58,7 @@ local AB_DEFAULTS = {
   autoMode          = false,
   scale             = 1.0,
   flipped           = false,
+  showUtility       = true,
   guidMarkOverrides = {},
   customPacks       = {},
   observations      = {},
@@ -884,18 +885,29 @@ end
 -- Reposition the automark and clear buttons based on flip state.
 local function AppleBar_ApplyLayout()
   if not abReady then return end
-  if AppleBarDB.flipped then
-    -- Flipped: clear=pos1, auto=pos2, mark slots start at pos3
-    clearSlot:ClearAllPoints()
-    clearSlot:SetPoint("LEFT", AppleBar, "LEFT", SlotXOff(1), 0)
-    autoSlot:ClearAllPoints()
-    autoSlot:SetPoint("LEFT", AppleBar, "LEFT", SlotXOff(2), 0)
+  local utility = AppleBarDB.showUtility
+  local extraSlots = utility and 2 or 0
+
+  -- Resize bar to fit current slot count
+  AppleBar:SetWidth((NUM_MARKS + extraSlots) * (BUTTON_SIZE + BAR_PADDING) + BAR_PADDING)
+
+  if utility then
+    autoSlot:Show()
+    clearSlot:Show()
+    if AppleBarDB.flipped then
+      clearSlot:ClearAllPoints()
+      clearSlot:SetPoint("LEFT", AppleBar, "LEFT", SlotXOff(1), 0)
+      autoSlot:ClearAllPoints()
+      autoSlot:SetPoint("LEFT", AppleBar, "LEFT", SlotXOff(2), 0)
+    else
+      autoSlot:ClearAllPoints()
+      autoSlot:SetPoint("LEFT", AppleBar, "LEFT", SlotXOff(NUM_MARKS + 1), 0)
+      clearSlot:ClearAllPoints()
+      clearSlot:SetPoint("LEFT", AppleBar, "LEFT", SlotXOff(NUM_MARKS + 2), 0)
+    end
   else
-    -- Normal: mark slots pos1-8, auto=pos9, clear=pos10
-    autoSlot:ClearAllPoints()
-    autoSlot:SetPoint("LEFT", AppleBar, "LEFT", SlotXOff(NUM_MARKS + 1), 0)
-    clearSlot:ClearAllPoints()
-    clearSlot:SetPoint("LEFT", AppleBar, "LEFT", SlotXOff(NUM_MARKS + 2), 0)
+    autoSlot:Hide()
+    clearSlot:Hide()
   end
 end
 
@@ -922,11 +934,11 @@ local function AppleBar_UpdateSlots()
   table.sort(active,   sortFn)
   table.sort(inactive, sortFn)
 
-  local flipped = AppleBarDB and AppleBarDB.flipped
-  local first  = flipped and inactive or active
-  local second = flipped and active   or inactive
-
-  local startPos = flipped and 3 or 1
+  local utility  = AppleBarDB and AppleBarDB.showUtility
+  local flipped  = AppleBarDB and AppleBarDB.flipped
+  local startPos = (flipped and utility) and 3 or 1
+  local first    = flipped and inactive or active
+  local second   = flipped and active   or inactive
   local position = startPos
 
   for _, i in ipairs(first) do
@@ -1032,41 +1044,61 @@ function AppleBar_Initialize()
 end
 
 -- ============================================================
--- Serialization  (compact, human-readable, no external deps)
--- Format: each record is one line: TYPE|key1|val1|key2|val2...
--- Types: OVR (override), PACK (custom pack entry), OBS (observation)
+-- Serialization  (pipe-delimited, one record per line)
+-- OVR|guid|mark|name|npcid
+-- PACK|zone|packKey|guid|mark|name|npcid
+-- OBS|zone|npcid|total|count1|count2|...|count8
 -- ============================================================
+
+local MARK_LABELS = {
+  [1]="Star", [2]="Circle", [3]="Diamond", [4]="Triangle",
+  [5]="Moon",  [6]="Square", [7]="Cross",   [8]="Skull"
+}
 
 local function AB_Serialize()
   local lines = {}
   local t = table.insert
 
-  -- guidMarkOverrides
+  -- Header comments explaining the format
+  t(lines, "# AppleBar exported data")
+  t(lines, "# Lines starting with # are comments and are ignored on import.")
+  t(lines, "#")
+  t(lines, "# OVR|guid|mark|name|npcid")
+  t(lines, "#   Per-mob mark override. mark=1(Star) to 8(Skull).")
+  t(lines, "#   npcid is stable across respawns; guid may change.")
+  t(lines, "#")
+  t(lines, "# PACK|zone|packKey|guid|mark|name|npcid")
+  t(lines, "#   Saved pack membership. Lines sharing zone+packKey belong to the same pack.")
+  t(lines, "#")
+  t(lines, "# OBS|zone|npcid|total|count1|count2|...|count8")
+  t(lines, "#   Observation counts per mark index (1=Star .. 8=Skull).")
+  t(lines, "#   total = sum of all counts. Used to learn consensus marks.")
+  t(lines, "#")
+  t(lines, "")
+
   for guid, entry in pairs(AppleBarDB.guidMarkOverrides) do
     local mark  = type(entry) == "table" and entry.mark  or entry
     local name  = type(entry) == "table" and entry.name  or "unknown"
-    local npcid = type(entry) == "table" and entry.npcid or ""
-    t(lines, "OVR|" .. guid .. "|" .. mark .. "|" .. name .. "|" .. (npcid or ""))
+    local npcid = type(entry) == "table" and (entry.npcid or "") or ""
+    t(lines, "OVR|" .. guid .. "|" .. mark .. "|" .. name .. "|" .. npcid)
   end
 
-  -- customPacks: OVR entries already cover per-guid marks; serialize pack membership
   for zone, packs in pairs(AppleBarDB.customPacks) do
     for packKey, pack in pairs(packs) do
       for guid, entry in pairs(pack) do
         local mark  = type(entry) == "table" and entry.mark  or entry
         local name  = type(entry) == "table" and entry.name  or "unknown"
-        local npcid = type(entry) == "table" and entry.npcid or ""
-        t(lines, "PACK|" .. zone .. "|" .. packKey .. "|" .. guid .. "|" .. mark .. "|" .. name .. "|" .. (npcid or ""))
+        local npcid = type(entry) == "table" and (entry.npcid or "") or ""
+        t(lines, "PACK|" .. zone .. "|" .. packKey .. "|" .. guid .. "|" .. mark .. "|" .. name .. "|" .. npcid)
       end
     end
   end
 
-  -- observations
   for zone, npcids in pairs(AppleBarDB.observations) do
     for npcid, counts in pairs(npcids) do
       local parts = "OBS|" .. zone .. "|" .. npcid .. "|" .. (counts.total or 0)
-      for markIndex = 1, 8 do
-        parts = parts .. "|" .. (counts[markIndex] or 0)
+      for i = 1, 8 do
+        parts = parts .. "|" .. (counts[i] or 0)
       end
       t(lines, parts)
     end
@@ -1084,18 +1116,22 @@ local function AB_Deserialize(str, merge)
   end
 
   local count = 0
-  for line in string.gfind(str, "[^\n]+") do
+  for line in string.gfind(str .. "\n", "([^\n]*)\n") do
+    if string.sub(line, 1, 1) ~= "#" and line ~= "" then
     local parts = {}
-    for segment in string.gfind(line, "[^|]+") do
-      parts[table.getn(parts) + 1] = segment
+    for seg in string.gfind(line, "([^|]*)") do
+      if seg ~= "" then parts[table.getn(parts) + 1] = seg end
     end
 
     local rtype = parts[1]
+
     if rtype == "OVR" and table.getn(parts) >= 4 then
       local guid, mark, name, npcid = parts[2], tonumber(parts[3]), parts[4], parts[5]
       if guid and mark then
-        AppleBarDB.guidMarkOverrides[guid] = { mark = mark, name = name or "unknown", npcid = npcid }
-        count = count + 1
+        if not merge or not AppleBarDB.guidMarkOverrides[guid] then
+          AppleBarDB.guidMarkOverrides[guid] = { mark=mark, name=name or "unknown", npcid=npcid }
+          count = count + 1
+        end
       end
 
     elseif rtype == "PACK" and table.getn(parts) >= 6 then
@@ -1104,23 +1140,28 @@ local function AB_Deserialize(str, merge)
       if zone and packKey and guid and mark then
         if not AppleBarDB.customPacks[zone] then AppleBarDB.customPacks[zone] = {} end
         if not AppleBarDB.customPacks[zone][packKey] then AppleBarDB.customPacks[zone][packKey] = {} end
-        AppleBarDB.customPacks[zone][packKey][guid] = { mark = mark, name = name or "unknown", npcid = npcid }
-        count = count + 1
+        if not merge or not AppleBarDB.customPacks[zone][packKey][guid] then
+          AppleBarDB.customPacks[zone][packKey][guid] = { mark=mark, name=name or "unknown", npcid=npcid }
+          count = count + 1
+        end
       end
 
     elseif rtype == "OBS" and table.getn(parts) >= 4 then
       local zone, npcid, total = parts[2], parts[3], tonumber(parts[4])
       if zone and npcid and total then
         if not AppleBarDB.observations[zone] then AppleBarDB.observations[zone] = {} end
-        local counts = { total = total }
-        for i = 1, 8 do
-          local c = tonumber(parts[4 + i])
-          if c and c > 0 then counts[i] = c end
+        if not merge or not AppleBarDB.observations[zone][npcid] then
+          local counts = { total = total }
+          for i = 1, 8 do
+            local c = tonumber(parts[4 + i])
+            if c and c > 0 then counts[i] = c end
+          end
+          AppleBarDB.observations[zone][npcid] = counts
+          count = count + 1
         end
-        AppleBarDB.observations[zone][npcid] = counts
-        count = count + 1
       end
     end
+    end  -- end comment-skip if
   end
 
   return true, count
@@ -1145,7 +1186,7 @@ local function AB_Import(merge)
     local mode = merge and "Merged" or "Imported"
     DEFAULT_CHAT_FRAME:AddMessage("|cffFFCC00AppleBar|r: " .. mode .. " |cff00FF00" .. count .. "|r records.")
   else
-    DEFAULT_CHAT_FRAME:AddMessage("|cffFFCC00AppleBar|r: Import failed: " .. count)
+    DEFAULT_CHAT_FRAME:AddMessage("|cffFFCC00AppleBar|r: Import failed: " .. tostring(count))
   end
 end
 
@@ -1161,6 +1202,7 @@ local function AppleBar_HandleCommand(msg)
     DEFAULT_CHAT_FRAME:AddMessage("  |cff00FF00/ab export|r         - Export data to AppleBar_data.txt")
     DEFAULT_CHAT_FRAME:AddMessage("  |cff00FF00/ab import|r         - Import data from AppleBar_data.txt (replaces)")
     DEFAULT_CHAT_FRAME:AddMessage("  |cff00FF00/ab merge|r          - Merge data from AppleBar_data.txt (keeps existing)")
+    DEFAULT_CHAT_FRAME:AddMessage("  |cff00FF00/ab utility|r        - Toggle auto-mark and clear buttons")
     DEFAULT_CHAT_FRAME:AddMessage("  |cff00FF00/ab flip|r           - Mirror/flip the bar orientation")
     DEFAULT_CHAT_FRAME:AddMessage("  |cff00FF00/ab lock|r           - Toggle drag lock")
     DEFAULT_CHAT_FRAME:AddMessage("  |cff00FF00/ab auto|r           - Toggle auto-mark mode")
@@ -1189,6 +1231,13 @@ local function AppleBar_HandleCommand(msg)
 
   elseif cmd == "merge" then
     AB_Import(true)
+
+  elseif cmd == "utility" then
+    AppleBarDB.showUtility = not AppleBarDB.showUtility
+    AppleBar_ApplyLayout()
+    AppleBar_UpdateSlots()
+    DEFAULT_CHAT_FRAME:AddMessage("|cffFFCC00AppleBar|r: Utility buttons " ..
+      (AppleBarDB.showUtility and "|cff00FF00shown|r" or "|cffFF4444hidden|r"))
 
   elseif cmd == "flip" then
     AppleBarDB.flipped = not AppleBarDB.flipped

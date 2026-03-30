@@ -3,7 +3,7 @@
 ## Notes: Compact raid marker bar with auto-mark memory. Requires SuperWoW.
 ## Author: You
 ## SavedVariables: AppleBarDB
-## Version: 1.0.1
+## Version: 1.0.2
 ## OptionalDeps: AutoMarker
 
 AppleBar.lua
